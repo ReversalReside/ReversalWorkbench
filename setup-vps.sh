@@ -5,7 +5,7 @@
 # ============================================================
 
 # --- ВСТАВЬ СЮДА СВОЙ ПУБЛИЧНЫЙ КЛЮЧ ОТ WINDOWS ПК ---
-MY_SSH_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIG... (ЗАМЕНИ ЭТО НА СВОЙ КЛЮЧ)"
+MY_SSH_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAQQDfwfncyRA+zxFMgXPLOshcmKBN+TvGsvIqvGVfAd ReversalReside@HomePC"
 # -----------------------------------------------------
 
 echo "🚀 [1/6] Запуск установщика..."
