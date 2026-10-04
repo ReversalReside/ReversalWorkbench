@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # ============================================================
-# ReversalReside VPS Auto-Installer v1.0
-# Для Omarchy/Arch Linux
-# Использование: curl -fsSL https://raw.githubusercontent.com/ZZenisky/vps-installer/main/install.sh | sudo bash
+# ReversalReside VPS Auto-Installer v2.0
+# Repository: https://github.com/ReversalReside/ReversalWorkbench
+# Usage: curl -fsSL <raw_url> | sudo bash
 # ============================================================
 
 set -e
 
-# Цвета
+# Цвета для вывода
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -18,23 +18,18 @@ NC='\033[0m'
 
 LOG_FILE="/var/log/vps_installer.log"
 
+# Функции логирования
 log() { echo -e "${BLUE}[$(date '+%H:%M:%S')]${NC} $1" | tee -a "$LOG_FILE"; }
 success() { echo -e "${GREEN}[✓]${NC} $1" | tee -a "$LOG_FILE"; }
 error() { echo -e "${RED}[✗]${NC} $1" | tee -a "$LOG_FILE"; exit 1; }
 warning() { echo -e "${YELLOW}[!]${NC} $1" | tee -a "$LOG_FILE"; }
 
-# Проверки
+# --- ПРОВЕРКИ ---
 check_root() {
-    [ "$EUID" -ne 0 ] && error "Запустите с sudo: curl ... | sudo bash"
-    success "Root права подтверждены"
-}
-
-check_system() {
-    if ! grep -qi "arch\|omarchy" /etc/os-release 2>/dev/null; then
-        warning "Система не определена как Arch/Omarchy, продолжаем на свой риск..."
-    else
-        success "Система: $(grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '"')"
+    if [ "$EUID" -ne 0 ]; then
+        error "Запустите с правами root: curl ... | sudo bash"
     fi
+    success "Root права подтверждены"
 }
 
 check_internet() {
@@ -44,34 +39,31 @@ check_internet() {
     success "Интернет подключен"
 }
 
-# Обновление системы
+# --- ОБНОВЛЕНИЕ И ПАКЕТЫ ---
 update_system() {
-    log "Обновление пакетной базы..."
+    log "Обновление системы..."
     pacman -Sy --noconfirm >> "$LOG_FILE" 2>&1
-    log "Обновление пакетов..."
     pacman -Su --noconfirm >> "$LOG_FILE" 2>&1
     success "Система обновлена"
 }
 
-# Установка пакетов
 install_packages() {
     log "Установка базовых пакетов..."
-    
     local PACKAGES=(
         vim htop git curl wget net-tools 
         openssh fail2ban ufw nginx 
         docker docker-compose zsh python3
         certbot cronie
     )
-    
     pacman -S --noconfirm "${PACKAGES[@]}" >> "$LOG_FILE" 2>&1
     success "Пакеты установлены (${#PACKAGES[@]} шт.)"
 }
 
-# Настройка SSH
-configure_ssh() {
-    log "Настройка SSH безопасности..."
+# --- НАСТРОЙКА БЕЗОПАСНОСТИ ---
+configure_ssh_key() {
+    log "Настройка SSH доступа..."
     
+    # Резервное копирование конфига
     cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak 2>/dev/null || true
     
     # Безопасные настройки
@@ -82,27 +74,31 @@ configure_ssh() {
     systemctl enable sshd
     systemctl restart sshd
     
-    success "SSH настроен (только по ключу)"
+    # Добавление ключа из переменной окружения (GitHub Secret)
+    if [ -n "$DEPLOY_KEY" ]; then
+        mkdir -p /root/.ssh
+        chmod 700 /root/.ssh
+        echo "$DEPLOY_KEY" >> /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+        success "SSH ключ из DEPLOY_KEY успешно добавлен"
+    else
+        warning "Переменная DEPLOY_KEY пуста. Ключ не добавлен."
+    fi
 }
 
-# Фаервол
 configure_firewall() {
     log "Настройка UFW фаервола..."
-    
     ufw default deny incoming
     ufw default allow outgoing
     ufw allow 22/tcp comment 'SSH'
     ufw allow 80/tcp comment 'HTTP'
     ufw allow 443/tcp comment 'HTTPS'
     ufw --force enable
-    
-    success "UFW активирован (порты: 22, 80, 443)"
+    success "UFW активирован"
 }
 
-# Fail2Ban
 configure_fail2ban() {
     log "Настройка Fail2Ban..."
-    
     cat > /etc/fail2ban/jail.local <<EOF
 [DEFAULT]
 bantime = 7200
@@ -116,17 +112,14 @@ filter = sshd
 logpath = /var/log/auth.log
 maxretry = 3
 EOF
-    
     systemctl enable fail2ban
     systemctl start fail2ban
-    
-    success "Fail2Ban настроен (бан на 2 часа после 3 попыток)"
+    success "Fail2Ban настроен"
 }
 
-# Nginx
+# --- СЕРВИСЫ ---
 configure_nginx() {
     log "Настройка Nginx..."
-    
     mkdir -p /var/www/html
     
     cat > /var/www/html/index.html <<'HTML'
@@ -134,202 +127,81 @@ configure_nginx() {
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VPS Server - ReversalReside</title>
     <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-        }
-        .container {
-            text-align: center;
-            padding: 40px;
-            background: rgba(255,255,255,0.1);
-            border-radius: 20px;
-            backdrop-filter: blur(10px);
-        }
-        h1 { margin: 0 0 20px 0; font-size: 2.5em; }
-        p { font-size: 1.2em; opacity: 0.9; }
+        body { font-family: sans-serif; background: #1a1a1a; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .box { text-align: center; padding: 40px; border: 1px solid #333; border-radius: 10px; }
+        h1 { color: #00ff9d; }
     </style>
 </head>
 <body>
-    <div class="container">
+    <div class="box">
         <h1>🚀 Сервер работает!</h1>
-        <p>Установлено автоматически ReversalReside VPS Installer</p>
-        <p><small>$(hostname) | $(date)</small></p>
+        <p>ReversalReside VPS Installer v2.0</p>
     </div>
 </body>
 </html>
 HTML
-    
-    cat > /etc/nginx/nginx.conf <<'EOF'
-user http;
-worker_processes auto;
-error_log /var/log/nginx/error.log warn;
-pid /run/nginx.pid;
 
-events {
-    worker_connections 1024;
-}
-
-http {
-    include       mime.types;
-    default_type  application/octet-stream;
-    sendfile      on;
-    keepalive_timeout 65;
-    
-    server {
-        listen 80;
-        server_name _;
-        root /var/www/html;
-        index index.html;
-        
-        location / {
-            try_files $uri $uri/ =404;
-        }
-    }
-}
-EOF
-    
     systemctl enable nginx
     systemctl start nginx
-    
-    success "Nginx настроен и запущен"
+    success "Nginx запущен"
 }
 
-# Docker
 configure_docker() {
     log "Настройка Docker..."
-    
     systemctl enable docker
     systemctl start docker
-    
-    # Создаем группу docker если её нет
     groupadd -f docker
-    
-    success "Docker установлен и запущен"
+    success "Docker запущен"
 }
 
-# Автообновления
-setup_auto_updates() {
-    log "Настройка автообновлений..."
-    
-    cat > /usr/local/bin/auto-update.sh <<'EOF'
-#!/bin/bash
-pacman -Syu --noconfirm >> /var/log/auto-update.log 2>&1
-systemctl restart nginx docker
-EOF
-    
-    chmod +x /usr/local/bin/auto-update.sh
-    
-    # Cron задача (каждую неделю в воскресенье 3:00)
-    (crontab -l 2>/dev/null; echo "0 3 * * 0 /usr/local/bin/auto-update.sh") | crontab -
-    systemctl enable cronie
-    systemctl start cronie
-    
-    success "Автообновления настроены (воскресенье 3:00)"
-}
-
-# Утилита информации
+# --- УТИЛИТЫ ---
 create_info_tool() {
     log "Создание утилиты vps-info..."
-    
     cat > /usr/local/bin/vps-info <<'EOF'
 #!/bin/bash
+SERVER_IP=$(hostname -I | awk '{print $1}')
 echo -e "\033[0;36m╔════════════════════════════════════════╗\033[0m"
 echo -e "\033[0;36m║     VPS Server Information             ║\033[0m"
 echo -e "\033[0;36m╚════════════════════════════════════════╝\033[0m"
-echo ""
-echo -e "\033[1;33mHostname:\033[0m      $(hostname)"
-echo -e "\033[1;33mIP Address:\033[0m    $(hostname -I | awk '{print $1}')"
-echo -e "\033[1;33mOS:\033[0m           $(grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '"')"
-echo -e "\033[1;33mKernel:\033[0m        $(uname -r)"
-echo -e "\033[1;33mUptime:\033[0m        $(uptime -p)"
-echo -e "\033[1;33mMemory:\033[0m        $(free -h | awk '/^Mem:/ {print $3 "/" $2}')"
-echo -e "\033[1;33mDisk:\033[0m          $(df -h / | awk 'NR==2 {print $3 "/" $2 " (" $5 ")"}')"
-echo ""
-echo -e "\033[1;32mActive Services:\033[0m"
-for svc in sshd nginx docker fail2ban ufw; do
-    if systemctl is-active --quiet $svc 2>/dev/null; then
-        echo -e "  \033[0;32m●\033[0m $svc"
-    else
-        echo -e "  \033[0;31m●\033[0m $svc (inactive)"
-    fi
-done
-echo ""
-echo -e "\033[0;36m╔════════════════════════════════════════╗\033[0m"
+echo -e "\033[1;33mIP Address:\033[0m    $SERVER_IP"
+echo -e "\033[1;33mConnection:\033[0m   ssh root@$SERVER_IP"
+if [ -s /root/.ssh/authorized_keys ]; then
+    echo -e "\033[0;32m● SSH Keys: Active\033[0m"
+else
+    echo -e "\033[0;31m● SSH Keys: Missing\033[0m"
+fi
+echo -e "\033[0;36m╚════════════════════════════════════════╝\033[0m"
 EOF
-    
     chmod +x /usr/local/bin/vps-info
-    success "Команда 'vps-info' создана"
 }
 
-# Финальная проверка
-final_check() {
-    log "Финальная проверка сервисов..."
-    echo ""
-    
-    local all_ok=true
-    for service in sshd nginx docker fail2ban; do
-        if systemctl is-active --quiet "$service"; then
-            success "✓ $service активен"
-        else
-            warning "✗ $service не активен"
-            all_ok=false
-        fi
-    done
-    
-    echo ""
-    if [ "$all_ok" = true ]; then
-        success "Все сервисы работают корректно!"
-    else
-        warning "Некоторые сервисы требуют внимания"
-    fi
-}
-
-# Главный процесс
+# --- ГЛАВНЫЙ ПРОЦЕСС ---
 main() {
     echo ""
-    echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║   ReversalReside VPS Auto-Installer v1.0     ║${NC}"
-    echo -e "${CYAN}║   Для Omarchy/Arch Linux                     ║${NC}"
-    echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
+    echo -e "${CYAN}╔══════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║   ReversalReside VPS Auto-Installer v2.0 ║${NC}"
+    echo -e "${CYAN}╚══════════════════════════════════════════╝${NC}"
     echo ""
     
     check_root
     check_internet
-    check_system
-    
-    echo ""
     update_system
     install_packages
-    configure_ssh
+    configure_ssh_key
     configure_firewall
     configure_fail2ban
     configure_nginx
     configure_docker
-    setup_auto_updates
     create_info_tool
-    final_check
     
     echo ""
-    echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║  ✓ Установка завершена успешно!          ║${NC}"
-    echo -e "${GREEN}╚══════════════════════════════════════════╝${NC}"
+    success "═══════════════════════════════════════"
+    success "  Установка завершена успешно!"
+    success "═══════════════════════════════════════"
     echo ""
-    echo -e "${YELLOW}Полезные команды:${NC}"
-    echo -e "  ${CYAN}vps-info${NC}              - Информация о сервере"
-    echo -e "  ${CYAN}systemctl status nginx${NC} - Статус веб-сервера"
-    echo -e "  ${CYAN}ufw status${NC}            - Статус фаервола"
-    echo -e "  ${CYAN}docker ps${NC}             - Запущенные контейнеры"
-    echo ""
-    echo -e "${BLUE}Логи: $LOG_FILE${NC}"
+    echo -e "${YELLOW}Выполни команду 'vps-info' для получения данных.${NC}"
     echo ""
 }
 
